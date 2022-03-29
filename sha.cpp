@@ -5,6 +5,7 @@
 #include <vector>
 #include <iomanip>
 #include <bit>
+#include <stdlib.h>
 
 using namespace std;
 
@@ -148,18 +149,7 @@ vector<uint8_t> padding(size_t const& message_length) {
   return padding;
 }
 
-vector<uint8_t> sha256(string const& message) {
-  auto bytes = to_bytes(message);
-  auto pad = padding(bytes.size());
-  bytes.insert(bytes.end(), pad.begin(), pad.end());
-  assert(bytes.size() % 64 == 0);
-
-  auto state = IV;
-
-  for (int i = 0; i < bytes.size(); i += 64) {
-    state = compress(state, vector<uint8_t>(bytes.begin()+i, bytes.begin()+i+64));
-  }
-
+vector<uint8_t> encode_state(vector<uint32_t> const& state) {
   assert(state.size() == 8);
   vector<uint8_t> output(32);
 
@@ -174,12 +164,50 @@ vector<uint8_t> sha256(string const& message) {
   return output;
 }
 
+vector<uint32_t> decode_state(vector<uint8_t> const& bytes) {
+  assert(bytes.size() == 32);
+  vector<uint32_t> state(8);
+
+  for (int i = 0; i < state.size(); i++) {
+    state[i] = *reinterpret_cast<uint32_t const*>(&bytes[i*4]);
+    if constexpr (endian::native == endian::little) {
+      state[i] = byteswap(state[i]);
+    }
+  }
+
+  return state;
+}
+
+vector<uint8_t> sha256(string const& message, vector<uint32_t> state = IV) {
+  auto bytes = to_bytes(message);
+  auto pad = padding(bytes.size());
+  bytes.insert(bytes.end(), pad.begin(), pad.end());
+  assert(bytes.size() % 64 == 0);
+
+  for (int i = 0; i < bytes.size(); i += 64) {
+    state = compress(state, vector<uint8_t>(bytes.begin()+i, bytes.begin()+i+64));
+  }
+
+  return encode_state(state);
+}
+
 string hexify(vector<uint8_t> const& bytes) {
   stringstream ss;
   for (auto const& b: bytes) {
     ss << setw(2) << setfill('0') << hex << static_cast<int>(b);
   }
   return ss.str();
+}
+
+vector<uint8_t> dehexify(string const& s) {
+  vector<uint8_t> bytes;
+
+  assert(s.length() %2 == 0);
+  for (int i = 0; i < s.length(); i += 2) {
+    bytes.push_back(static_cast<uint8_t>(strtol(s.substr(i, 2).c_str(), NULL, 16)));
+  }
+
+  return bytes;
 }
 
 void test_padding() {
@@ -251,9 +279,31 @@ void test_hash() {
   }
 }
 
+void test_length_extension_attack() {
+  string original_hash = "27b82abe296f3ecd5174b6e6168ea683cd8ef94306d9abd9f81807f2fa587d2a";
+  string suffix = "manatee jaguar zebra zebra dog";
+
+  // Assume length of original message + padding = 64.
+  auto repad = padding(64 + suffix.length());
+
+  auto state = decode_state(dehexify(original_hash));
+  auto bytes = to_bytes(suffix);
+  bytes.insert(bytes.end(), repad.begin(), repad.end());
+
+  assert(bytes.size() % 64 == 0);
+
+  for (int i = 0; i < bytes.size(); i += 64) {
+    state = compress(state, vector<uint8_t>(bytes.begin()+i, bytes.begin()+i+64));
+  }
+
+  auto hash = encode_state(state);
+  assert(hexify(hash) == "50417b93404facb1b481990a7bf6ac963b1e1ee0ccced8b2a5938caa28b52b41");
+}
+
 int main() {
   test_schedule();
   test_round();
   test_padding();
   test_hash();
+  test_length_extension_attack();
 }
