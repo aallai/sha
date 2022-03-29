@@ -1,7 +1,10 @@
+#include <sstream>
 #include <iostream>
 #include <string>
 #include <bitset>
 #include <vector>
+#include <iomanip>
+#include <bit>
 
 using namespace std;
 
@@ -15,6 +18,18 @@ static const vector<uint32_t> ROUND_CONSTANTS = {
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 };
+
+template<typename T> T byteswap(T x) {
+  T swapped = 0;
+  for (int i = 0; i < sizeof(T)/2; i++) {
+    auto low_shift = i*8;
+    auto high_shift = ((sizeof(T) - 1 - i) * 8);
+    T low = (x >> low_shift) & 0xFFULL;
+    T high = (x >> high_shift) & 0xFFULL;
+    swapped |= (low << high_shift) | (high << low_shift);
+  }
+  return swapped;
+}
 
 uint32_t rightrotate32(uint32_t x, int i) {
   i %= 32;
@@ -46,6 +61,22 @@ uint32_t majority(uint32_t x, uint32_t y, uint32_t z) {
   return (x & y) ^ (x & z) ^ (y & z);
 }
 
+vector<uint32_t> message_schedule(vector<uint8_t> const& block) {
+  assert(block.size() == 64);
+
+  vector<uint32_t> W(64);
+
+  for (int i = 0; i < block.size(); i += 4) {
+    W[i / 4] = byteswap(*reinterpret_cast<uint32_t const*>(&block[i]));
+  }
+
+  for (int i = 16; i < W.size(); i++) {
+    W[i] = W[i-16] + little_sigma0(W[i-15]) + W[i-7] + little_sigma1(W[i-2]);
+  }
+
+  return W;
+}
+
 vector<uint32_t> round(vector<uint32_t> const& state, uint32_t round_constant, uint32_t schedule_word) {
   assert(state.size() == 8);
 
@@ -66,38 +97,7 @@ vector<uint32_t> round(vector<uint32_t> const& state, uint32_t round_constant, u
   };
 }
 
-vector<uint32_t> message_schedule(vector<uint8_t> const& block) {
-  assert(block.size() == 64);
-
-  vector<uint32_t> W(64);
-
-  for (int i = 0; i < block.size(); i += 4) {
-    uint32_t word = 0;
-    for (int j = 0; j < 4; j++) {
-      word |= block[i+j] << (24 - (8 * j));
-    }
-    W[i / 4] = word;
-  }
-
-  for (int i = 16; i < W.size(); i++) {
-    W[i] = W[i-16] + little_sigma0(W[i-15]) + W[i-7] + little_sigma1(W[i-2]);
-  }
-
-  return W;
-}
-
-vector<uint8_t> block_from_string(string const& s) {
-  assert(s.size() == 64);
-
-  vector<uint8_t> block(64);
-  for (int i = 0; i < s.size(); i++) {
-    block[i] = (uint32_t)s[i];
-  }
-
-  return block;
-}
-
-vector<uint32_t> compress(vector<uint32_t> const& input_state, vector<uint32_t> const& block) {
+vector<uint32_t> compress(vector<uint32_t> const& input_state, vector<uint8_t> const& block) {
   assert(input_state.size() == 8);
   assert(block.size() == 64);
 
@@ -117,6 +117,54 @@ vector<uint32_t> compress(vector<uint32_t> const& input_state, vector<uint32_t> 
     input_state[5] + state[5],
     input_state[6] + state[6],
     input_state[7] + state[7],
+  };
+}
+
+vector<uint8_t> block_from_string(string const& s) {
+  assert(s.size() == 64);
+
+  vector<uint8_t> block(64);
+  for (int i = 0; i < s.size(); i++) {
+    block[i] = static_cast<uint8_t>(s[i]);
+  }
+
+  return block;
+}
+
+vector<uint8_t> padding(size_t const& message_length) {
+  auto zeros = (64 - ((message_length + 9) % 64)) % 64;
+  vector<uint8_t> padding(9 + zeros);
+  padding[0] = 128;
+
+  auto bitlength = message_length * 8;
+  if constexpr (endian::native == endian::little) {
+    bitlength = byteswap(bitlength);
+  }
+  *reinterpret_cast<uint64_t*>(&padding[padding.size() - 8]) = bitlength;
+  return padding;
+}
+
+void test_padding() {
+  auto to_str = [] (vector<uint8_t> const& padding) {
+    stringstream ss;
+    for (auto const& b: padding) {
+      ss << setw(2) << setfill('0') << hex << static_cast<int>(b);
+    }
+    return ss.str();
+  };
+
+  vector<size_t> lengths = {0, 1, 55, 56, 64, 492022654431536432};
+  vector<string> expected_pads = {
+    "80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008",
+    "8000000000000001b8",
+    "8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c0",
+    "80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200",
+    "800000000000000036a01ffa96b12980"
+  };
+
+  for (int i = 0; i < lengths.size(); i++) {
+    assert(to_str(padding(lengths[i])) == expected_pads[i]);
   }
 }
 
@@ -151,4 +199,5 @@ void test_round() {
 int main() {
   test_schedule();
   test_round();
+  test_padding();
 }
