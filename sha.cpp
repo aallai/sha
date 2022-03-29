@@ -155,13 +155,14 @@ vector<uint8_t> sha256(string const& message) {
   assert(bytes.size() % 64 == 0);
 
   auto state = IV;
-  assert(state.size() == 8);
 
   for (int i = 0; i < bytes.size(); i += 64) {
     state = compress(state, vector<uint8_t>(bytes.begin()+i, bytes.begin()+i+64));
   }
 
+  assert(state.size() == 8);
   vector<uint8_t> output(32);
+
   for (int i = 0; i < state.size(); i++) {
     auto word = state[i];
     if constexpr (endian::native == endian::little) {
