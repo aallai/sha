@@ -9,14 +9,19 @@
 using namespace std;
 
 static const vector<uint32_t> ROUND_CONSTANTS = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+static const vector<uint32_t> IV = {
+  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+  0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 };
 
 template<typename T> T byteswap(T x) {
@@ -120,10 +125,9 @@ vector<uint32_t> compress(vector<uint32_t> const& input_state, vector<uint8_t> c
   };
 }
 
-vector<uint8_t> block_from_string(string const& s) {
-  assert(s.size() == 64);
+vector<uint8_t> to_bytes(string const& s) {
+  vector<uint8_t> block(s.size());
 
-  vector<uint8_t> block(64);
   for (int i = 0; i < s.size(); i++) {
     block[i] = static_cast<uint8_t>(s[i]);
   }
@@ -144,15 +148,40 @@ vector<uint8_t> padding(size_t const& message_length) {
   return padding;
 }
 
-void test_padding() {
-  auto to_str = [] (vector<uint8_t> const& padding) {
-    stringstream ss;
-    for (auto const& b: padding) {
-      ss << setw(2) << setfill('0') << hex << static_cast<int>(b);
-    }
-    return ss.str();
-  };
+vector<uint8_t> sha256(string const& message) {
+  auto bytes = to_bytes(message);
+  auto pad = padding(bytes.size());
+  bytes.insert(bytes.end(), pad.begin(), pad.end());
+  assert(bytes.size() % 64 == 0);
 
+  auto state = IV;
+  assert(state.size() == 8);
+
+  for (int i = 0; i < bytes.size(); i += 64) {
+    state = compress(state, vector<uint8_t>(bytes.begin()+i, bytes.begin()+i+64));
+  }
+
+  vector<uint8_t> output(32);
+  for (int i = 0; i < state.size(); i++) {
+    auto word = state[i];
+    if constexpr (endian::native == endian::little) {
+      word = byteswap(word);
+    }
+    *reinterpret_cast<uint32_t*>(&output[i*4]) = word;
+  }
+
+  return output;
+}
+
+string hexify(vector<uint8_t> const& bytes) {
+  stringstream ss;
+  for (auto const& b: bytes) {
+    ss << setw(2) << setfill('0') << hex << static_cast<int>(b);
+  }
+  return ss.str();
+}
+
+void test_padding() {
   vector<size_t> lengths = {0, 1, 55, 56, 64, 492022654431536432};
   vector<string> expected_pads = {
     "80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
@@ -163,8 +192,10 @@ void test_padding() {
     "800000000000000036a01ffa96b12980"
   };
 
+  assert(lengths.size() == expected_pads.size());
+
   for (int i = 0; i < lengths.size(); i++) {
-    assert(to_str(padding(lengths[i])) == expected_pads[i]);
+    assert(hexify(padding(lengths[i])) == expected_pads[i]);
   }
 }
 
@@ -172,7 +203,7 @@ void test_schedule() {
   string s("iguana wombat dog kangaroo llama turkey yak unicorn sheep xenoce");
   s.resize(64);
 
-  auto W = message_schedule(block_from_string(s));
+  auto W = message_schedule(to_bytes(s));
 
   auto expected_W = vector<uint32_t>{
     1768387937, 1851859063, 1869439585, 1948279919, 1730177889, 1852268914, 1869553772, 1818324321,
@@ -196,8 +227,32 @@ void test_round() {
   assert(state == expected_state);
 }
 
+void test_hash() {
+  auto input_messages = vector<string>{
+    "",
+    "hello world",
+    "aardvark zebra yak pig jaguar aardvark rhinoceros butte",
+    "narwhal dog llama llama giraffe narwhal octopus dog xeno",
+    "John Jacob Jingleheimer Schmidt! His name is my name too. Whenever we go out the people always shout there goes John Jacob Jingleheimer Schmidt! Nanananananana..."
+  };
+  auto expected_hashes = vector<string>{
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+    "4b45e1bec21185865d1628a8a502eed789193a3c253a529983e4bc17fa65f32b",
+    "99069f1eba4c874aba649c17136a253e1dd504cda936ab77cf189c2cf9eb88ff",
+    "68b74d91364475247c10bfee2621eaa13bcabb033ed1dee58b74c05e7944489a"
+  };
+
+  assert(input_messages.size() == expected_hashes.size());
+
+  for (int i = 0; i < input_messages.size(); i++) {
+    assert(hexify(sha256(input_messages[i])) == expected_hashes[i]);
+  }
+}
+
 int main() {
   test_schedule();
   test_round();
   test_padding();
+  test_hash();
 }
