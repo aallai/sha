@@ -202,9 +202,9 @@ string hexify(vector<uint8_t> const& bytes) {
 vector<uint8_t> dehexify(string const& s) {
   vector<uint8_t> bytes;
 
-  assert(s.length() %2 == 0);
+  assert(s.length() % 2 == 0);
   for (int i = 0; i < s.length(); i += 2) {
-    bytes.push_back(static_cast<uint8_t>(strtol(s.substr(i, 2).c_str(), NULL, 16)));
+    bytes.push_back(static_cast<uint8_t>(strtol(s.substr(i, 2).c_str(), nullptr, 16)));
   }
 
   return bytes;
